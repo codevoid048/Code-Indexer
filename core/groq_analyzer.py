@@ -43,7 +43,7 @@ class GroqCodeAnalyzer:
                     {"role": "user", "content": prompt}
                 ],
                 model=self.model,
-                max_tokens=2000,
+                max_tokens=5000,
                 temperature=0.1  # Lower temperature for more focused analysis
             )
             

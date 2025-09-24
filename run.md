@@ -1,47 +1,59 @@
-## CLI 
+## ~> CLI Usage
 
-### 1. Set up environment (Optional - for AI features)
+The Code Indexer provides a comprehensive command-line interface for all operations.
 
+### Basic Commands
 ```bash
-# Set your Groq API key for AI analysis features
-export GROQ_API_KEY="your-groq-api-key"
-```
-
-### 2. Index your code
-
-```bash
-# Index current directory
-python main.py index .
-
-# Index with force reindexing
+# Index a directory
 python main.py index /path/to/your/code --force
 
-# Index without subdirectories
-python main.py index . --no-recursive
+# Start the API server
+python main.py server --host 127.0.0.1 --port 8000
+
+# Show index statistics
+python main.py stats
 ```
 
-### 3. Search your code
-
+### Search Commands
 ```bash
-# General search
-python main.py search "MyClass"
-
-# Search only symbols
-python main.py search "function_name" --type symbol
+# Basic search
+python main.py search "function_name" --type symbol --limit 20
 
 # Search files
-python main.py search "utils.py" --type file
+python main.py search "config" --type file
 
-# Limit results
-python main.py search "MyClass" --limit 5
+# Search dependencies
+python main.py search "requests" --type dependency
 ```
 
-### 4. AI-powered analysis
-
+### AI Analysis Commands (Groq)
 ```bash
 # Analyze code with AI
-python main.py analyze "explain this function" --symbol my_function
+python main.py analyze "explain this authentication logic" --file auth.py
 
-# Analyze entire file
-python main.py analyze "find potential bugs" --file src/utils.py
+# Analyze specific symbol
+python main.py analyze "how does this function work" --symbol login_user
+```
+
+### LlamaIndex RAG Commands (Natural Language)
+```bash
+# Natural language queries
+python main.py query "How does the authentication system work?"
+python main.py query "Show me examples of error handling patterns"
+python main.py query "What functions are related to user management?"
+
+# Code explanations with context
+python main.py explain "What does the parse_file function do?" --context 5
+
+# Find similar patterns
+python main.py patterns "async def function_name" --language python
+
+# Architecture analysis
+python main.py architecture "payment processing system"
+
+# Best practices finder
+python main.py best-practices "database connection handling"
+
+# Complexity analysis
+python main.py complexity --file src/models/user.py
 ```

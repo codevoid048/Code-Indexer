@@ -12,6 +12,7 @@ from core.vectorstore import TextBasedVectorStore
 from core.search import CodeSearchEngine
 from core.incremental import IncrementalIndexer
 from core.groq_analyzer import GroqCodeAnalyzer
+from core.llama_index_service import LlamaIndexService
 from models import SearchQuery
 
 
@@ -24,6 +25,7 @@ class CodeIndexerCLI:
         self.search_engine = CodeSearchEngine(self.vectorstore, self.parser)
         self.incremental_indexer = IncrementalIndexer(self.parser, self.vectorstore)
         self.groq_analyzer = GroqCodeAnalyzer()
+        self.llama_service = LlamaIndexService(self.vectorstore)
         
         print("Code Indexer initialized successfully!")
     
@@ -196,6 +198,133 @@ class CodeIndexerCLI:
         except Exception as e:
             print(f"Error during Groq analysis: {e}")
 
+    def query_llama(self, query: str, top_k: int = 10, response_mode: str = "tree_summarize"):
+        """Perform natural language queries using LlamaIndex RAG."""
+        try:
+            print(f"Querying with LlamaIndex RAG: '{query}'")
+            print("-" * 50)
+            
+            result = self.llama_service.query_with_sources(query, top_k=top_k, response_mode=response_mode)
+            
+            if "error" in result:
+                print(f"Error: {result['error']}")
+                return
+            
+            print(f"Answer: {result.get('answer', 'No answer generated')}")
+            
+            if result.get('sources'):
+                print(f"\nSources ({len(result['sources'])}):")
+                for i, source in enumerate(result['sources'][:5], 1):  # Show top 5 sources
+                    metadata = source.get('metadata', {})
+                    print(f"{i}. {metadata.get('type', 'unknown')}: {metadata.get('name', 'unnamed')}")
+                    if metadata.get('file_path'):
+                        print(f"   File: {metadata['file_path']}")
+                    if source.get('score'):
+                        print(f"   Score: {source['score']:.3f}")
+                    print()
+                    
+        except Exception as e:
+            print(f"Error during LlamaIndex query: {e}")
+
+    def explain_code_llama(self, query: str, context_lines: int = 3):
+        """Explain code concepts with enhanced context."""
+        try:
+            print(f"Explaining code concept: '{query}'")
+            print("-" * 50)
+            
+            result = self.llama_service.query_code_explanation(query, context_lines)
+            
+            if "error" in result:
+                print(f"Error: {result['error']}")
+                return
+            
+            print(f"Explanation: {result.get('answer', 'No explanation generated')}")
+            
+            if result.get('sources'):
+                print(f"\nRelevant Code Context:")
+                for source in result['sources'][:3]:  # Show top 3 sources
+                    metadata = source.get('metadata', {})
+                    print(f"\nFrom {metadata.get('file_path', 'unknown')}:")
+                    if source.get('context'):
+                        for line in source['context']['lines']:
+                            print(f"  {line.rstrip()}")
+                    
+        except Exception as e:
+            print(f"Error during code explanation: {e}")
+
+    def find_patterns_llama(self, snippet: str, language: Optional[str] = None):
+        """Find similar code patterns."""
+        try:
+            print(f"Finding similar patterns for: {snippet}")
+            if language:
+                print(f"Filtered by language: {language}")
+            print("-" * 50)
+            
+            result = self.llama_service.query_similar_patterns(snippet, language)
+            
+            if "error" in result:
+                print(f"Error: {result['error']}")
+                return
+            
+            print(f"Pattern Analysis: {result.get('answer', 'No patterns found')}")
+            
+        except Exception as e:
+            print(f"Error during pattern search: {e}")
+
+    def analyze_architecture_llama(self, component: str):
+        """Analyze system architecture."""
+        try:
+            print(f"Analyzing architecture for: '{component}'")
+            print("-" * 50)
+            
+            result = self.llama_service.query_architecture_overview(component)
+            
+            if "error" in result:
+                print(f"Error: {result['error']}")
+                return
+            
+            print(f"Architecture Overview: {result.get('answer', 'No analysis generated')}")
+            
+        except Exception as e:
+            print(f"Error during architecture analysis: {e}")
+
+    def find_best_practices_llama(self, topic: str, language: Optional[str] = None):
+        """Find best practices examples."""
+        try:
+            print(f"Finding best practices for: '{topic}'")
+            if language:
+                print(f"Filtered by language: {language}")
+            print("-" * 50)
+            
+            result = self.llama_service.query_best_practices(topic, language)
+            
+            if "error" in result:
+                print(f"Error: {result['error']}")
+                return
+            
+            print(f"Best Practices: {result.get('answer', 'No examples found')}")
+            
+        except Exception as e:
+            print(f"Error during best practices search: {e}")
+
+    def analyze_complexity_llama(self, file_path: Optional[str] = None):
+        """Analyze code complexity."""
+        try:
+            target = file_path or "entire codebase"
+            print(f"Analyzing complexity for: {target}")
+            print("-" * 50)
+            
+            result = self.llama_service.analyze_code_complexity(file_path)
+            
+            if "error" in result:
+                print(f"Error: {result['error']}")
+                return
+            
+            print(f"Complexity Analysis: {result.get('answer', 'No analysis generated')}")
+            
+        except Exception as e:
+            print(f"Error during complexity analysis: {e}")
+
 
 def create_arg_parser() -> argparse.ArgumentParser:
     """Create argument parser for CLI."""
@@ -257,6 +386,31 @@ def create_arg_parser() -> argparse.ArgumentParser:
     analyze_parser.add_argument('--symbol', help='Specific symbol to analyze')
     analyze_parser.add_argument('--file', help='Specific file to analyze')
     
+    # LlamaIndex query commands
+    query_parser = subparsers.add_parser('query', help='Natural language queries using LlamaIndex RAG')
+    query_parser.add_argument('query', help='Natural language query about the codebase')
+    query_parser.add_argument('--top-k', type=int, default=10, help='Number of results to retrieve')
+    query_parser.add_argument('--mode', choices=['tree_summarize', 'simple_summarize', 'refine'], 
+                             default='tree_summarize', help='Response mode')
+    
+    explain_parser = subparsers.add_parser('explain', help='Explain code concepts with context')
+    explain_parser.add_argument('query', help='What to explain')
+    explain_parser.add_argument('--context', type=int, default=3, help='Lines of context to include')
+    
+    patterns_parser = subparsers.add_parser('patterns', help='Find similar code patterns')
+    patterns_parser.add_argument('snippet', help='Code snippet to find similar patterns for')
+    patterns_parser.add_argument('--language', help='Filter by programming language')
+    
+    arch_parser = subparsers.add_parser('architecture', help='Get architectural overview')
+    arch_parser.add_argument('component', help='Component or system to analyze')
+    
+    best_parser = subparsers.add_parser('best-practices', help='Find best practices examples')
+    best_parser.add_argument('topic', help='Topic to find best practices for')
+    best_parser.add_argument('--language', help='Filter by programming language')
+    
+    complexity_parser = subparsers.add_parser('complexity', help='Analyze code complexity')
+    complexity_parser.add_argument('--file', help='Specific file to analyze (optional)')
+    
     return parser
 
 
@@ -311,6 +465,24 @@ async def main():
             file_path=args.file
         )
 
+    elif args.command == 'query':
+        cli.query_llama(args.query, args.top_k, args.mode)
+
+    elif args.command == 'explain':
+        cli.explain_code_llama(args.query, args.context)
+
+    elif args.command == 'patterns':
+        cli.find_patterns_llama(args.snippet, args.language)
+
+    elif args.command == 'architecture':
+        cli.analyze_architecture_llama(args.component)
+
+    elif args.command == 'best-practices':
+        cli.find_best_practices_llama(args.topic, args.language)
+
+    elif args.command == 'complexity':
+        cli.analyze_complexity_llama(args.file)
+
     else:
         parser.print_help()
 if __name__ == "__main__":
@@ -330,7 +502,7 @@ if __name__ == "__main__":
             asyncio.create_task(main())
         except RuntimeError:
             asyncio.run(main())
-            
+
     except KeyboardInterrupt:
         print("\nShutting down...")
     except Exception as e:

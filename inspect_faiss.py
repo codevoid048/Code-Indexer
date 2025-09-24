@@ -4,15 +4,10 @@ FAISS Index Inspector - View FAISS index data in VS Code
 Run this to export index data to JSON/CSV files that VS Code can display
 """
 
+from datetime import datetime
 import json
 import csv
-import os
-import sys
 from pathlib import Path
-from typing import Dict, List, Any
-
-# Add project root to path
-sys.path.append(str(Path(__file__).parent))
 
 from core.vectorstore import TextBasedVectorStore
 
@@ -119,7 +114,7 @@ def inspect_faiss_indices():
         "total_files": len(store.file_metadata),
         "symbol_index_size": len(store.symbol_strings),
         "file_index_size": len(store.file_strings),
-        "export_timestamp": "2025-09-24T00:00:00Z",  # Would use datetime.now() in real implementation
+        "export_timestamp": datetime.now(),
         "exported_files": [
             "symbols.json", "symbols.csv",
             "files.json", "files.csv",

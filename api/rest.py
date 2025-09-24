@@ -13,6 +13,7 @@ from core.vectorstore import TextBasedVectorStore
 from core.search import CodeSearchEngine
 from core.incremental import IncrementalIndexer
 from core.groq_analyzer import GroqCodeAnalyzer
+from core.llama_index_service import LlamaIndexService
 from models import (
     SearchQuery, SearchResult, IndexRequest, IndexStats, 
     CodeFile, Symbol, AnalysisRequest, AnalysisResult,
@@ -29,6 +30,7 @@ class CodeIndexerAPI:
         self.search_engine = CodeSearchEngine(self.vectorstore, self.parser)
         self.incremental_indexer = IncrementalIndexer(self.parser, self.vectorstore)
         self.groq_analyzer = GroqCodeAnalyzer()
+        self.llama_service = LlamaIndexService(self.vectorstore)
         
         # Track indexing status
         self.indexing_status = {
@@ -337,6 +339,126 @@ async def search_regex(
         return results
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Regex search error: {str(e)}")
+
+
+# LlamaIndex RAG endpoints
+@app.post("/query")
+async def natural_language_query(
+    query: str = Query(..., description="Natural language query about the codebase"),
+    top_k: int = Query(10, description="Number of results to retrieve", ge=1, le=50),
+    response_mode: str = Query("tree_summarize", description="Response mode: tree_summarize, simple_summarize, etc.")
+):
+    """Perform natural language queries using LlamaIndex RAG."""
+    try:
+        result = api_instance.llama_service.query_with_sources(
+            query,
+            top_k=top_k,
+            response_mode=response_mode
+        )
+        return result
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"RAG query error: {str(e)}")
+
+
+@app.post("/query/explain")
+async def explain_code(
+    query: str = Query(..., description="What code concept or functionality to explain"),
+    context_lines: int = Query(3, description="Lines of context to include", ge=0, le=10)
+):
+    """Get detailed explanations of code concepts with context."""
+    try:
+        result = api_instance.llama_service.query_code_explanation(query, context_lines)
+        return result
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Code explanation error: {str(e)}")
+
+
+@app.post("/query/patterns")
+async def find_similar_patterns(
+    code_snippet: str = Query(..., description="Code snippet to find similar patterns for"),
+    language: Optional[str] = Query(None, description="Filter by programming language")
+):
+    """Find similar code patterns across the codebase."""
+    try:
+        result = api_instance.llama_service.query_similar_patterns(code_snippet, language)
+        return result
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Pattern search error: {str(e)}")
+
+
+@app.post("/query/architecture")
+async def get_architecture_overview(
+    component: str = Query(..., description="Component or system to analyze")
+):
+    """Get architectural overview of components or systems."""
+    try:
+        result = api_instance.llama_service.query_architecture_overview(component)
+        return result
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Architecture analysis error: {str(e)}")
+
+
+@app.post("/query/best-practices")
+async def find_best_practices(
+    topic: str = Query(..., description="Topic to find best practices for"),
+    language: Optional[str] = Query(None, description="Filter by programming language")
+):
+    """Find examples of best practices for specific topics."""
+    try:
+        result = api_instance.llama_service.query_best_practices(topic, language)
+        return result
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Best practices search error: {str(e)}")
+
+
+@app.post("/query/conversational")
+async def conversational_query(
+    query: str = Query(..., description="Current question"),
+    conversation_history: Optional[str] = Query(None, description="JSON string of previous conversation messages")
+):
+    """Perform conversational queries with context from previous interactions."""
+    try:
+        history = []
+        if conversation_history:
+            import json
+            history = json.loads(conversation_history)
+
+        result = api_instance.llama_service.conversational_query(history, query)
+        return result
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Conversational query error: {str(e)}")
+
+
+@app.post("/query/complexity")
+async def analyze_complexity(
+    file_path: Optional[str] = Query(None, description="Specific file to analyze, or analyze entire codebase")
+):
+    """Analyze code complexity patterns and suggest improvements."""
+    try:
+        result = api_instance.llama_service.analyze_code_complexity(file_path)
+        return result
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Complexity analysis error: {str(e)}")
+
+
+@app.get("/llama/stats")
+async def get_llama_index_stats():
+    """Get LlamaIndex service statistics."""
+    try:
+        stats = api_instance.llama_service.get_stats()
+        return stats
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Stats retrieval error: {str(e)}")
+
+
+@app.post("/llama/rebuild")
+async def rebuild_llama_index():
+    """Rebuild the LlamaIndex from current vectorstore data."""
+    try:
+        api_instance.llama_service.rebuild_index()
+        return {"message": "LlamaIndex rebuilt successfully"}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Index rebuild error: {str(e)}")
 
 
 # Symbol and file information endpoints

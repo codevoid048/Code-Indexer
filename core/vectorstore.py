@@ -10,6 +10,7 @@ import hashlib
 import numpy as np
 import faiss
 from cachetools import LRUCache
+from llama_index.embeddings.huggingface import HuggingFaceEmbedding
 
 from models import CodeFile, Symbol, SearchResult, IndexStats, Language
 
@@ -48,8 +49,25 @@ class TextBasedVectorStore:
         self.file_counter = 0
         self.content_counter = 0
         
+        # Initialize embedding model
+        self.embed_model = None
+        self._init_embedding_model()
+        
         # Load existing indices if they exist
         self._load_indices()
+    
+    def _init_embedding_model(self):
+        """Initialize the HuggingFace embedding model."""
+        try:
+            self.embed_model = HuggingFaceEmbedding(
+                model_name="BAAI/bge-small-en-v1.5",
+                trust_remote_code=True
+            )
+            print("HuggingFace embeddings initialized successfully")
+        except Exception as e:
+            print(f"Failed to initialize HuggingFace embeddings: {e}")
+            print("Falling back to simple hash-based vectors")
+            self.embed_model = None
     
     def add_file(self, code_file: CodeFile) -> bool:
         """Add a code file and its symbols to the index."""
@@ -355,11 +373,22 @@ class TextBasedVectorStore:
             # Load FAISS indices
             symbol_index_path = self.index_dir / "symbol_index.faiss"
             if symbol_index_path.exists():
-                self.symbol_index = faiss.read_index(str(symbol_index_path))
+                loaded_index = faiss.read_index(str(symbol_index_path))
+                # Check if dimensions match (384 for BGE embeddings)
+                if loaded_index.d != 384:
+                    print(f"Symbol index has wrong dimensions ({loaded_index.d}), rebuilding...")
+                    self.symbol_index = None
+                else:
+                    self.symbol_index = loaded_index
             
             file_index_path = self.index_dir / "file_index.faiss"
             if file_index_path.exists():
-                self.file_index = faiss.read_index(str(file_index_path))
+                loaded_index = faiss.read_index(str(file_index_path))
+                if loaded_index.d != 384:
+                    print(f"File index has wrong dimensions ({loaded_index.d}), rebuilding...")
+                    self.file_index = None
+                else:
+                    self.file_index = loaded_index
             
             # Load metadata
             metadata_path = self.index_dir / "metadata.json"
@@ -419,12 +448,16 @@ class TextBasedVectorStore:
         return ' '.join(filter(None, parts)).lower()
     
     def _text_to_vector(self, text: str) -> np.ndarray:
-        """Convert text to a simple hash-based vector for FAISS."""
-        # This is a simplified approach using character frequency
-        # In production, you might want to use TF-IDF or word embeddings
+        """Convert text to vector using embeddings or fallback to hash-based approach."""
+        # Try to use HuggingFace embeddings if available
+        if self.embed_model is not None:
+            try:
+                return np.array(self.embed_model.get_text_embedding(text), dtype=np.float32)
+            except Exception as e:
+                print(f"Embedding failed, falling back to hash-based: {e}")
         
-        # Create a fixed-size vector (256 dimensions) based on text characteristics
-        vector = np.zeros(256, dtype=np.float32)
+        # Fallback: Create a fixed-size vector (384 dimensions to match BGE) based on text characteristics
+        vector = np.zeros(384, dtype=np.float32)
         
         if not text:
             return vector
@@ -432,13 +465,13 @@ class TextBasedVectorStore:
         # Character frequency features
         for char in text:
             if char.isalnum():
-                vector[ord(char) % 256] += 1
+                vector[ord(char) % 384] += 1
         
         # Word-based features
         words = text.split()
         for i, word in enumerate(words):
             if word:
-                hash_val = hash(word) % 256
+                hash_val = hash(word) % 384
                 vector[hash_val] += 1
         
         # Normalize the vector
