@@ -334,12 +334,15 @@ class TextBasedVectorStore:
             languages=languages,
             symbol_types=symbol_types,
             index_size_mb=round(index_size_mb, 2),
-            last_updated=datetime.now()
+            last_updated=datetime.now().isoformat()
         )
     
     def save_indices(self):
         """Save FAISS indices and metadata to disk."""
         try:
+            # Clean up metadata before saving
+            self._cleanup_metadata()
+            
             # Save FAISS indices
             if self.symbol_index and self.symbol_index.ntotal > 0:
                 faiss.write_index(self.symbol_index, str(self.index_dir / "symbol_index.faiss"))
@@ -414,10 +417,80 @@ class TextBasedVectorStore:
                 self.file_counter = metadata.get('file_counter', 0)
                 self.content_counter = metadata.get('content_counter', 0)
                 
+                # Clean up metadata and update counters
+                self._cleanup_metadata()
+                
                 print(f"Loaded indices from {self.index_dir}")
                 
         except Exception as e:
             print(f"Error loading indices: {e}")
+    
+    def _cleanup_metadata(self):
+        """Clean up metadata by removing entries for non-existent files and updating counters."""
+        try:
+            # Remove files that no longer exist
+            files_to_remove = []
+            for file_id, code_file in self.file_metadata.items():
+                if not os.path.exists(code_file.absolute_path):
+                    files_to_remove.append(file_id)
+            
+            for file_id in files_to_remove:
+                del self.file_metadata[file_id]
+                if file_id in self.file_strings:
+                    del self.file_strings[file_id]
+            
+            # Remove symbols for files that no longer exist
+            symbols_to_remove = []
+            for symbol_id, symbol in self.symbol_metadata.items():
+                if not os.path.exists(symbol.file_path):
+                    symbols_to_remove.append(symbol_id)
+            
+            for symbol_id in symbols_to_remove:
+                del self.symbol_metadata[symbol_id]
+                if symbol_id in self.symbol_strings:
+                    del self.symbol_strings[symbol_id]
+            
+            # Remove duplicate files (keep the first occurrence)
+            seen_paths = {}
+            duplicate_files = []
+            for file_id, code_file in self.file_metadata.items():
+                path = code_file.absolute_path
+                if path in seen_paths:
+                    duplicate_files.append(file_id)
+                else:
+                    seen_paths[path] = file_id
+            
+            for file_id in duplicate_files:
+                del self.file_metadata[file_id]
+                if file_id in self.file_strings:
+                    del self.file_strings[file_id]
+            
+            # Update counters to match actual data
+            self.symbol_counter = len(self.symbol_metadata)
+            self.file_counter = len(self.file_metadata)
+            
+            # Clean string_to_id mappings
+            valid_file_ids = set(self.file_metadata.keys())
+            valid_symbol_ids = set(self.symbol_metadata.keys())
+            
+            cleaned_mappings = {}
+            for key, id_val in self.string_to_id.items():
+                if isinstance(id_val, int):
+                    if key.startswith('file:') and str(id_val) in valid_file_ids:
+                        cleaned_mappings[key] = id_val
+                    elif key.startswith('symbol:') and str(id_val) in valid_symbol_ids:
+                        cleaned_mappings[key] = id_val
+                else:
+                    # Keep string mappings
+                    cleaned_mappings[key] = id_val
+            
+            self.string_to_id = cleaned_mappings
+            
+            if files_to_remove or symbols_to_remove or duplicate_files:
+                print(f"Cleaned up: {len(files_to_remove)} missing files, {len(symbols_to_remove)} missing symbols, {len(duplicate_files)} duplicates")
+                
+        except Exception as e:
+            print(f"Error during metadata cleanup: {e}")
     
     def _generate_file_searchtext(self, code_file: CodeFile) -> str:
         """Generate searchable text representation of a file."""

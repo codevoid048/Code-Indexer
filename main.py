@@ -490,12 +490,10 @@ if __name__ == "__main__":
         parser = create_arg_parser()
         args = parser.parse_args()
 
-        # Handle server command synchronously before async context
         if args.command == 'server':
             run_server(args.host, args.port, args.reload)
             sys.exit(0)
 
-        # For all other commands, use async main
         try:
             loop = asyncio.get_running_loop()
             print("Warning: Event loop already running, using existing loop")

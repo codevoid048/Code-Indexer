@@ -114,7 +114,7 @@ def inspect_faiss_indices():
         "total_files": len(store.file_metadata),
         "symbol_index_size": len(store.symbol_strings),
         "file_index_size": len(store.file_strings),
-        "export_timestamp": datetime.now(),
+        "export_timestamp": datetime.now().isoformat(),
         "exported_files": [
             "symbols.json", "symbols.csv",
             "files.json", "files.csv",

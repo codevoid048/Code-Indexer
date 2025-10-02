@@ -14,6 +14,7 @@ from llama_index.llms.groq import Groq
 from llama_index.embeddings.huggingface import HuggingFaceEmbedding
 
 from core.vectorstore import TextBasedVectorStore
+from core.parser import MultiLanguageParser
 from models import CodeFile, Symbol, SearchResult, SearchQuery
 from config import Config
 
@@ -32,8 +33,143 @@ class LlamaIndexService:
         # Initialize LLM and embeddings
         self._setup_llm_and_embeddings()
 
+        # Clean up metadata for missing files
+        self.cleanup_missing_files()
+
         # Build LlamaIndex from existing data
         self._build_index_from_existing_data()
+        
+        # Scan for any new files in data directory
+        self.scan_and_index_data_directory()
+
+    def scan_and_index_data_directory(self, data_dir: str = "data"):
+        """Scan data directory and index any new files."""
+        try:
+            if not os.path.exists(data_dir):
+                print(f"Data directory {data_dir} does not exist")
+                return
+
+            parser = MultiLanguageParser()
+            
+            # File patterns to include/exclude (same as IncrementalIndexer defaults)
+            include_patterns = [
+                "*.py", "*.js", "*.ts", "*.jsx", "*.tsx",
+                "*.java", "*.go", "*.rs", "*.cpp", "*.c", "*.h", "*.hpp"
+            ]
+            exclude_patterns = [
+                "node_modules/*", "__pycache__/*", ".git/*", "*.pyc", 
+                "*.pyo", "*.so", "*.dll", ".venv/*", "venv/*",
+                "build/*", "dist/*", "*.egg-info/*"
+            ]
+            
+            indexed_paths = {cf.absolute_path for cf in self.vectorstore.file_metadata.values()}
+            
+            def should_process_file(file_path: str) -> bool:
+                """Check if a file should be processed."""
+                from pathlib import Path
+                path = Path(file_path)
+                
+                # Check exclude patterns first
+                for pattern in exclude_patterns:
+                    if pattern in str(path) or path.match(pattern):
+                        return False
+                
+                # Check include patterns
+                for pattern in include_patterns:
+                    if path.match(pattern):
+                        return True
+                
+                return False
+            
+            new_files = []
+            for root, dirs, files in os.walk(data_dir):
+                for file in files:
+                    file_path = os.path.join(root, file)
+                    if file_path not in indexed_paths and should_process_file(file_path):
+                        new_files.append(file_path)
+            
+            if new_files:
+                print(f"Found {len(new_files)} new files to index")
+                for file_path in new_files:
+                    try:
+                        code_file = parser.parse_file(file_path)
+                        if code_file:
+                            success = self.vectorstore.add_file(code_file)
+                            if success:
+                                # Add to LlamaIndex documents
+                                doc = self._codefile_to_document(code_file)
+                                if doc:
+                                    self.documents.append(doc)
+                                print(f"Indexed new file: {file_path}")
+                            else:
+                                print(f"Failed to index: {file_path}")
+                    except Exception as e:
+                        print(f"Error indexing {file_path}: {e}")
+                
+                # Rebuild index with new documents
+                if self.documents:
+                    try:
+                        if hasattr(self.vectorstore, 'symbol_index') and self.vectorstore.symbol_index is not None:
+                            faiss_store = FaissVectorStore(faiss_index=self.vectorstore.symbol_index)
+                            storage_context = StorageContext.from_defaults(vector_store=faiss_store)
+                            self.index = VectorStoreIndex.from_documents(
+                                self.documents,
+                                storage_context=storage_context,
+                                embed_model=self.embed_model
+                            )
+                        else:
+                            self.index = VectorStoreIndex.from_documents(
+                                self.documents,
+                                embed_model=self.embed_model
+                            )
+                        print("Index updated with new files")
+                    except Exception as e:
+                        print(f"Failed to rebuild index: {e}")
+            else:
+                print("No new files found")
+
+        except Exception as e:
+            print(f"Error scanning data directory: {e}")
+
+    def cleanup_missing_files(self):
+        """Remove metadata for files that no longer exist."""
+        try:
+            files_to_remove = []
+            symbols_to_remove = []
+            
+            # Check files
+            for file_id, code_file in self.vectorstore.file_metadata.items():
+                if not os.path.exists(code_file.absolute_path):
+                    files_to_remove.append(file_id)
+            
+            # Check symbols
+            for symbol_id, symbol in self.vectorstore.symbol_metadata.items():
+                if not os.path.exists(symbol.file_path):
+                    symbols_to_remove.append(symbol_id)
+            
+            # Remove missing files and their symbols
+            for file_id in files_to_remove:
+                del self.vectorstore.file_metadata[file_id]
+                del self.vectorstore.file_strings[file_id]
+                # Remove from string_to_id
+                keys_to_remove = [k for k, v in self.vectorstore.string_to_id.items() if v == file_id]
+                for key in keys_to_remove:
+                    del self.vectorstore.string_to_id[key]
+            
+            for symbol_id in symbols_to_remove:
+                del self.vectorstore.symbol_metadata[symbol_id]
+                del self.vectorstore.symbol_strings[symbol_id]
+                keys_to_remove = [k for k, v in self.vectorstore.string_to_id.items() if v == symbol_id]
+                for key in keys_to_remove:
+                    del self.vectorstore.string_to_id[key]
+            
+            if files_to_remove or symbols_to_remove:
+                print(f"Cleaned up {len(files_to_remove)} missing files and {len(symbols_to_remove)} missing symbols")
+                # Save the cleaned metadata
+                self.vectorstore.save_indices()
+            
+        except Exception as e:
+            print(f"Error during cleanup: {e}")
 
     def _setup_llm_and_embeddings(self):
         """Setup LLM and embedding models."""
@@ -73,17 +209,22 @@ class LlamaIndexService:
     def _build_index_from_existing_data(self):
         """Convert existing FAISS data to LlamaIndex documents."""
         try:
-            # Convert files to documents
+            # Convert files to documents - only process files that still exist
             for file_id, code_file in self.vectorstore.file_metadata.items():
-                doc = self._codefile_to_document(code_file)
-                if doc:
-                    self.documents.append(doc)
+                if os.path.exists(code_file.absolute_path):
+                    doc = self._codefile_to_document(code_file)
+                    if doc:
+                        self.documents.append(doc)
+                else:
+                    print(f"Skipping missing file: {code_file.absolute_path}")
 
             # Convert symbols to documents (as separate docs for better granularity)
             for symbol_id, symbol in self.vectorstore.symbol_metadata.items():
-                doc = self._symbol_to_document(symbol)
-                if doc:
-                    self.documents.append(doc)
+                # Only include symbols from files that still exist
+                if os.path.exists(symbol.file_path):
+                    doc = self._symbol_to_document(symbol)
+                    if doc:
+                        self.documents.append(doc)
 
             # Create index from documents
             if self.documents:

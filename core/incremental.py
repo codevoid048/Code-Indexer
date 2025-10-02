@@ -176,7 +176,7 @@ class IncrementalIndexer:
         
         # Statistics
         self.files_processed = 0
-        self.last_update = datetime.now()
+        self.last_update = datetime.now().isoformat()
     
     def add_change_callback(self, callback: Callable[[str, str], None]):
         """Add a callback to be called when files change."""
@@ -185,7 +185,7 @@ class IncrementalIndexer:
     def _on_file_change(self, file_path: str, change_type: str):
         """Handle file change notifications."""
         self.files_processed += 1
-        self.last_update = datetime.now()
+        self.last_update = datetime.now().isoformat()
         
         # Notify all callbacks
         for callback in self.change_callbacks:

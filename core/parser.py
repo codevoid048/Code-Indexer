@@ -95,7 +95,7 @@ class MultiLanguageParser:
                 lines_count=len(content.split('\n')),
                 hash=file_hash,
                 last_modified=datetime.fromtimestamp(stat.st_mtime),
-                last_indexed=datetime.now(),
+                last_indexed=datetime.now().isoformat(),
             )
             
             # Parse symbols based on language
@@ -105,6 +105,8 @@ class MultiLanguageParser:
                 self._parse_javascript(content, code_file)
             elif language == Lang.JAVA:
                 self._parse_java(content, code_file)
+            elif language == Lang.CPP:
+                self._parse_cpp(content, code_file)
             else:
                 # Fallback to regex-based parsing
                 self._parse_generic(content, code_file)
@@ -370,6 +372,121 @@ class MultiLanguageParser:
                     return_type=return_type
                 )
                 code_file.symbols.append(symbol)
+    
+    def _parse_cpp(self, content: str, code_file: CodeFile):
+        """Parse C++ symbols using tree-sitter."""
+        try:
+            parser = self.parsers.get('cpp')
+            if not parser:
+                print("C++ parser not available, falling back to generic parsing")
+                self._parse_generic(content, code_file)
+                return
+            
+            tree = parser.parse(content.encode('utf-8'))
+            root = tree.root_node
+            
+            def traverse_tree(node, parent_context=None):
+                """Recursively traverse the AST to find symbols."""
+                context = parent_context or {}
+                
+                # Only process function definitions at the top level or in namespaces/classes
+                if node.type == 'function_definition':
+                    # Make sure this is not inside a control structure
+                    if not self._is_inside_control_structure(node):
+                        # Extract function name and signature
+                        declarator = None
+                        return_type = None
+                        
+                        for child in node.children:
+                            if child.type in ['primitive_type', 'type_identifier', 'template_type']:
+                                return_type = content[child.start_byte:child.end_byte].strip()
+                            elif child.type == 'function_declarator':
+                                declarator = child
+                                break
+                        
+                        if declarator:
+                            # Find function name
+                            func_name = None
+                            parameters = []
+                            
+                            for child in declarator.children:
+                                if child.type == 'identifier':
+                                    func_name = content[child.start_byte:child.end_byte]
+                                elif child.type == 'parameter_list':
+                                    # Extract parameters
+                                    for param in child.children:
+                                        if param.type == 'parameter_declaration':
+                                            param_text = content[param.start_byte:param.end_byte].strip()
+                                            if param_text and not param_text.startswith(',') and param_text != '(' and param_text != ')':
+                                                parameters.append(param_text)
+                            
+                            if func_name and func_name not in ['if', 'for', 'while', 'switch', 'case', 'default']:
+                                # Get line number
+                                start_line = content[:node.start_byte].count('\n') + 1
+                                
+                                symbol = Symbol(
+                                    id=self._generate_symbol_id(code_file.path, func_name, start_line),
+                                    name=func_name,
+                                    type=SymbolType.FUNCTION,
+                                    file_path=code_file.path,
+                                    line_number=start_line,
+                                    signature=content[node.start_byte:node.end_byte].strip(),
+                                    parameters=parameters,
+                                    return_type=return_type
+                                )
+                                code_file.symbols.append(symbol)
+                
+                elif node.type in ['class_specifier', 'struct_specifier']:
+                    # Extract class/struct name
+                    class_name = None
+                    for child in node.children:
+                        if child.type == 'type_identifier':
+                            class_name = content[child.start_byte:child.end_byte]
+                            break
+                    
+                    if class_name:
+                        start_line = content[:node.start_byte].count('\n') + 1
+                        symbol_type = SymbolType.CLASS if node.type == 'class_specifier' else SymbolType.STRUCT
+                        
+                        symbol = Symbol(
+                            id=self._generate_symbol_id(code_file.path, class_name, start_line),
+                            name=class_name,
+                            type=symbol_type,
+                            file_path=code_file.path,
+                            line_number=start_line,
+                            signature=content[node.start_byte:node.end_byte].strip()
+                        )
+                        code_file.symbols.append(symbol)
+                
+                # Recursively traverse children
+                for child in node.children:
+                    traverse_tree(child, context)
+            
+            def _is_inside_control_structure(self, node):
+                """Check if a node is inside a control structure."""
+                current = node.parent
+                while current:
+                    if current.type in ['if_statement', 'for_statement', 'while_statement', 
+                                      'switch_statement', 'compound_statement']:
+                        return True
+                    current = current.parent
+                return False
+            
+            traverse_tree(root)
+            
+        except Exception as e:
+            print(f"Error parsing C++ with tree-sitter: {e}, falling back to generic parsing")
+            self._parse_generic(content, code_file)
+    
+    def _is_inside_control_structure(self, node):
+        """Check if a node is inside a control structure."""
+        current = node.parent
+        while current:
+            if current.type in ['if_statement', 'for_statement', 'while_statement', 
+                              'switch_statement', 'compound_statement']:
+                return True
+            current = current.parent
+        return False
     
     def _parse_generic(self, content: str, code_file: CodeFile):
         """Generic parsing for unsupported languages using simple patterns."""
